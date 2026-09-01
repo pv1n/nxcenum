@@ -35,10 +35,15 @@ sudo mv nxcenum /usr/local/bin/
 nxcenum <protocols|all> <targets> -u <username> -p <password> [-o <output_file>]
 ```
 
-- `<protocols>`: comma-separated list (`smb,ldap,winrm`) or `all`.
-- `<targets>`: a single IP/hostname, or a path to a file with one target per line.
-- `-u` / `-p`: the credential to test.
-- `-o` (optional): save plain-text results to a file, in addition to the colored terminal output.
+### Flags
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `<protocols\|all>` | Yes | Comma-separated list of protocols to check (`smb,ldap,winrm`), or `all` for every supported protocol (`smb`, `ldap`, `winrm`, `rdp`, `mssql`, `ssh`). Positional, must be the first argument. |
+| `<targets>` | Yes | A single IP/hostname, or a path to a file with one target per line. Positional, must be the second argument. |
+| `-u <username>` | Yes | Username to authenticate with. |
+| `-p <password>` | Yes | Password to authenticate with. |
+| `-o <output_file>` | No | Saves plain-text results (no color codes) to the given file, in addition to the colored terminal output. Ideal for pasting into a report. |
 
 ### Examples
 
@@ -52,17 +57,15 @@ Check only SMB and WinRM against a list of targets, saving the results for a rep
 nxcenum smb,winrm targets.txt -u bob -p 'P@ssw0rd!' -o results.txt
 ```
 
-## Sample output
+## Demo
 
-```
-══════ Protocolo: SMB ══════
-  -> Target: 10.10.10.10
-SMB   10.10.10.10   445   DC01   [+] corp.local\bob:P@ssw0rd! (Pwn3d!)
-     [+] Acceso SMB confirmado, enumerando shares en 10.10.10.10
-SMB   10.10.10.10   445   DC01   [*] Enumerated shares
-SMB   10.10.10.10   445   DC01   Share   Permissions   Remark
-...
-```
+Full protocol sweep (`all`) against a domain controller with a valid low-privileged credential that
+turns out to have admin-equivalent access:
+
+![nxcenum demo](docs/demo.png)
+
+SMB shows admin access (`Pwn3d!`) plus the full share listing, LDAP and WinRM confirm the same access
+level, and RDP/MSSQL/SSH report cleanly that the service didn't respond instead of failing silently.
 
 ## Notes
 
