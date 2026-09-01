@@ -1,0 +1,139 @@
+#!/bin/bash
+#
+# nxcenum - valida el alcance de una credencial contra múltiples servicios con netexec
+#
+# Usage:
+#   nxcenum <protocols|all> <targets> -u <username> -p <password> [-o <output_file>]
+#
+# Examples:
+#   nxcenum all 10.10.10.10 -u bob -p password
+#   nxcenum smb,ldap,winrm hosts.txt -u bob -p password -o results.txt
+#
+# Notas:
+# - No hace pre-check de puertos, nxc corre igual aunque el puerto esté cerrado
+#   (por diseño, para mantener un output consistente contra todos los targets).
+# - Si el protocolo es smb y la auth da éxito, se enumeran los shares
+#   automáticamente con --shares.
+# - El archivo de salida (-o) siempre queda en texto plano, sin códigos de color.
+
+# ---- Colores (bytes ESC reales via $'...', no el string "\033") ----
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+BLUE=$'\033[0;34m'
+CYAN=$'\033[0;36m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
+
+# ---- Argument Validation ----
+if [ "$#" -lt 4 ]; then
+    printf '%s\n' "${RED}[-] Usage: $0 <protocols|all> <targets> -u <username> -p <password> [-o <output_file>]${NC}"
+    exit 1
+fi
+
+if ! command -v nxc >/dev/null 2>&1; then
+    printf '%s\n' "${RED}[-] netexec (nxc) no está instalado o no está en el PATH${NC}"
+    exit 1
+fi
+
+PROTOS_RAW="$1"
+TARGETS_RAW="$2"
+shift 2
+
+USER=""
+PASS=""
+OUTPUT=""
+
+while getopts "u:p:o:" opt; do
+    case $opt in
+        u) USER="$OPTARG" ;;
+        p) PASS="$OPTARG" ;;
+        o) OUTPUT="$OPTARG" ;;
+        *)
+            printf '%s\n' "${RED}[-] Invalid flag${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$USER" ] || [ -z "$PASS" ]; then
+    printf '%s\n' "${RED}[-] Missing required flags: -u <username> -p <password>${NC}"
+    exit 1
+fi
+
+if [ -n "$OUTPUT" ]; then
+    : > "$OUTPUT"
+    printf '%s\n' "${CYAN}[+] Guardando resultados en: $OUTPUT${NC}"
+fi
+
+# ---- Protocol Handling ----
+if [ "$PROTOS_RAW" = "all" ]; then
+    PROTO_ARRAY=(smb ldap winrm rdp mssql ssh)
+else
+    IFS=',' read -ra PROTO_ARRAY <<< "$PROTOS_RAW"
+fi
+
+# ---- Target Handling ----
+if [ -f "$TARGETS_RAW" ]; then
+    TARGETS=$(cat "$TARGETS_RAW")
+else
+    TARGETS="$TARGETS_RAW"
+fi
+
+# log <texto_color_para_pantalla> [texto_plano_para_archivo]
+# IMPORTANTE: usa printf, nunca echo -e. El output de nxc puede traer
+# secuencias tipo "\c" (ej: dominio\usuario) que echo -e interpretaría
+# como códigos de escape y cortaría la salida a la mitad.
+log() {
+    printf '%s\n' "$1"
+    if [ -n "$OUTPUT" ]; then
+        local plain="${2:-$1}"
+        printf '%s\n' "$plain" | sed -E 's/\x1b\[[0-9;]*m//g' >> "$OUTPUT"
+    fi
+}
+
+# Resalta el output crudo de nxc: verde para éxito, rojo para fallos, dorado para Pwn3d!
+highlight_nxc() {
+    printf '%s\n' "$1" | sed -E \
+        -e "s/\(Pwn3d!\)/${BOLD}${GREEN}(Pwn3d!)${NC}/g" \
+        -e "s/\[\+\]/${GREEN}[+]${NC}/g" \
+        -e "s/\[-\]/${RED}[-]${NC}/g"
+}
+
+# Filtra los SyntaxWarning de librerías python (impacket, lsassy, etc) que
+# nxc arrastra por stderr. Son ruido de las dependencias, no output real.
+# Se ven como dos líneas: "archivo.py:123: SyntaxWarning: ..." seguida de
+# la línea de código con sangría (ej: "  return string").
+clean_output() {
+    printf '%s\n' "$1" | grep -v -E '\.py:[0-9]+: .*Warning' | grep -v -E '^[[:space:]]+return\b'
+}
+
+# ---- Spray Loop ----
+for PROTO in "${PROTO_ARRAY[@]}"; do
+    UPPER_PROTO=$(printf '%s' "$PROTO" | tr '[:lower:]' '[:upper:]')
+    log "
+${BOLD}${CYAN}══════ Protocolo: ${UPPER_PROTO} ══════${NC}" "
+[+] Spraying protocol: ${PROTO}"
+
+    for TARGET in $TARGETS; do
+        log "${BLUE}  -> Target: ${TARGET}${NC}" "  -> Target: ${TARGET}"
+
+        RESULT=$(nxc "$PROTO" "$TARGET" -u "$USER" -p "$PASS" 2>&1)
+        RESULT=$(clean_output "$RESULT")
+
+        if [ -z "$RESULT" ]; then
+            log "${YELLOW}     [!] Sin respuesta en ${PROTO} (servicio no disponible o filtrado)${NC}" "     [!] Sin respuesta en ${PROTO} (servicio no disponible o filtrado)"
+        else
+            log "$(highlight_nxc "$RESULT")" "$RESULT"
+        fi
+
+        # Si es smb y hubo autenticación exitosa, enumera shares y contenido
+        if [ "$PROTO" = "smb" ] && printf '%s' "$RESULT" | grep -q '\[+\]'; then
+            log "${GREEN}     [+] Acceso SMB confirmado, enumerando shares en ${TARGET}${NC}" "     [+] Acceso SMB confirmado, enumerando shares en ${TARGET}"
+
+            SHARES=$(nxc smb "$TARGET" -u "$USER" -p "$PASS" --shares 2>&1)
+            SHARES=$(clean_output "$SHARES")
+            log "$(highlight_nxc "$SHARES")" "$SHARES"
+        fi
+    done
+done
