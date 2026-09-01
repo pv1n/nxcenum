@@ -23,7 +23,7 @@ Active Directory assessment.
 Requires [netexec](https://github.com/Pennyw0rth/NetExec) to be installed and available in your `PATH`.
 
 ```bash
-git clone https://github.com/<your-username>/nxcenum.git
+git clone https://github.com/pv1n/nxcenum.git
 cd nxcenum
 chmod +x nxcenum
 sudo mv nxcenum /usr/local/bin/
