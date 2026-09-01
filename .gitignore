@@ -1,0 +1,9 @@
+# Resultados de corridas locales (no deberían subirse al repo)
+results*.txt
+*.log
+
+# Basura de editores/OS
+.DS_Store
+*.swp
+.vscode/
+.idea/
